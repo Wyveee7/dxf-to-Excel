@@ -22,26 +22,43 @@ def extract_text_entities(dxf_path):
     return texts
 
 
-def group_into_table(texts, tolerance=1.0):
-    from collections import defaultdict
+def extract_lines(dxf_path):
+    doc = ezdxf.readfile(dxf_path)
+    msp = doc.modelspace()
+    h_lines = []  # horizontal
+    v_lines = []  # vertical
 
-    rows = defaultdict(list)
+    for entity in msp:
+        if entity.dxftype() == "LINE":
+            x1, y1 = round(entity.dxf.start.x, 2), round(entity.dxf.start.y, 2)
+            x2, y2 = round(entity.dxf.end.x, 2), round(entity.dxf.end.y, 2)
+
+            if abs(y1 - y2) < 0.5:  # horizontal
+                h_lines.append(round((y1 + y2) / 2, 2))
+            elif abs(x1 - x2) < 0.5:  # vertical
+                v_lines.append(round((x1 + x2) / 2, 2))
+
+    return sorted(set(h_lines), reverse=True), sorted(set(v_lines))
+
+
+def build_table_from_grid(texts, h_lines, v_lines):
+    table = [["" for _ in range(len(v_lines) - 1)] for _ in range(len(h_lines) - 1)]
+
     for x, y, text in texts:
-        matched = False
-        for ry in rows:
-            if abs(ry - y) < tolerance:
-                rows[ry].append((x, text))
-                matched = True
+        row, col = None, None
+        for i in range(len(h_lines) - 1):
+            if h_lines[i] >= y > h_lines[i + 1]:
+                row = i
                 break
-        if not matched:
-            rows[y].append((x, text))
-
-    ordered_rows = sorted(rows.items(), key=lambda r: -r[0])
-
-    table = []
-    for _, row_items in ordered_rows:
-        row = [text for _, text in sorted(row_items, key=lambda item: item[0])]
-        table.append(row)
+        for j in range(len(v_lines) - 1):
+            if v_lines[j] <= x < v_lines[j + 1]:
+                col = j
+                break
+        if row is not None and col is not None:
+            if table[row][col] == "":
+                table[row][col] = text
+            else:
+                table[row][col] += " " + text
 
     return table
 
@@ -62,9 +79,10 @@ if uploaded_file is not None:
         st.info("⏳ Processando o arquivo...")
 
         texts = extract_text_entities(file_path)
-        table = group_into_table(texts)
+        h_lines, v_lines = extract_lines(file_path)
+        table = build_table_from_grid(texts, h_lines, v_lines)
 
-        if table:
+        if any(any(cell for cell in row) for row in table):
             df = pd.DataFrame(table)
             st.success("✅ Tabela extraída com sucesso!")
             st.dataframe(df)
@@ -81,4 +99,4 @@ if uploaded_file is not None:
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
         else:
-            st.warning("Nenhum texto foi detectado no arquivo.")
+            st.warning("Nenhuma tabela reconhecida com linhas e textos.")
